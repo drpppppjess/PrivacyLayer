@@ -1,9 +1,11 @@
 import { Note } from "./note";
 import {
+  WithdrawalPublicInputs,
   merkleNodeToField,
   noteScalarToField,
   poolIdToField,
   computeNullifierHash,
+  serializeWithdrawalPublicInputs,
   stellarAddressToField,
 } from "./encoding";
 import { WitnessValidationError } from "./errors";
@@ -51,6 +53,7 @@ export interface MerkleProof {
 export interface Groth16Proof {
   proof: Uint8Array;
   publicInputs: string[];
+  publicInputBytes: Uint8Array;
 }
 
 /**
@@ -159,6 +162,34 @@ export interface PreparedWitness {
   fee: string;
 }
 
+export const PREPARED_WITHDRAWAL_WITNESS_SCHEMA = [
+  'nullifier',
+  'secret',
+  'leaf_index',
+  'hash_path',
+  'pool_id',
+  'root',
+  'nullifier_hash',
+  'recipient',
+  'amount',
+  'relayer',
+  'fee',
+] as const;
+
+function canonicalizePreparedWitness(witness: PreparedWitness): PreparedWitness {
+  return {
+    nullifier: witness.nullifier,
+    secret: witness.secret,
+    leaf_index: witness.leaf_index,
+    hash_path: witness.hash_path.map((entry) => entry),
+    pool_id: witness.pool_id,
+    root: witness.root,
+    nullifier_hash: witness.nullifier_hash,
+    recipient: witness.recipient,
+    amount: witness.amount,
+    relayer: witness.relayer,
+    fee: witness.fee,
+  };
 export interface WitnessPreparationOptions {
   merkleDepth?: number;
 }
@@ -207,7 +238,7 @@ export class ProofGenerator {
     }
 
     try {
-      return await this.backend.generateProof(witness);
+      return await this.backend.generateProof(canonicalizePreparedWitness(witness));
     } catch (e: any) {
       throw new ProvingError(
         `Backend proof generation failed: ${e.message}`,
@@ -301,8 +332,10 @@ export class ProofGenerator {
    * Formats a raw proof from Noir/Barretenberg into the format
    * expected by the Soroban contract.
    */
-  static formatProof(rawProof: Uint8Array): Buffer {
-    // Soroban contract expects Proof struct: { a: BytesN<64>, b: BytesN<128>, c: BytesN<64> }
+  static formatProofPayload(
+    rawProof: Uint8Array,
+    publicInputs: WithdrawalPublicInputs
+  ): Groth16Proof {
     try {
       assertValidGroth16ProofBytes(rawProof, "rawProof");
     } catch (e: any) {
@@ -312,6 +345,29 @@ export class ProofGenerator {
         e,
       );
     }
-    return Buffer.from(rawProof);
+
+    try {
+      const serialized = serializeWithdrawalPublicInputs(publicInputs);
+      return {
+        proof: Buffer.from(rawProof),
+        publicInputs: serialized.fields,
+        publicInputBytes: serialized.bytes,
+      };
+    } catch (e: any) {
+      throw new ProvingError(
+        `Invalid withdrawal public-input schema: ${e.message}`,
+        'FORMATTING_ERROR',
+        e
+      );
+    }
+  }
+
+  /**
+   * Formats a raw proof from Noir/Barretenberg into the proof bytes
+   * expected by the Soroban contract.
+   */
+  static formatProof(rawProof: Uint8Array, publicInputs: WithdrawalPublicInputs): Buffer {
+    // Soroban contract expects Proof struct: { a: BytesN<64>, b: BytesN<128>, c: BytesN<64> }
+    return Buffer.from(this.formatProofPayload(rawProof, publicInputs).proof);
   }
 }

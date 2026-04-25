@@ -10,7 +10,7 @@ class CountingBackend implements ProvingBackend {
   async generateProof(witness: any): Promise<Uint8Array> {
     this.calls += 1;
     const digest = stableHash32('proof', JSON.stringify(witness));
-    const proof = new Uint8Array(64);
+    const proof = new Uint8Array(256);
     proof.set(digest, 0);
     proof.set(digest, 32);
     return proof;
@@ -35,8 +35,7 @@ function makeRequest(overrides: Partial<WithdrawalRequest> = {}): WithdrawalRequ
   return {
     note,
     merkleProof,
-    recipient: '0xrecipient',
-    relayer: '0xrelayer',
+    recipient: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
     fee: 0n,
     ...overrides
   };
@@ -69,8 +68,8 @@ describe('Withdrawal proof cache', () => {
     const backend = new CountingBackend();
     const cache = new InMemoryProofCache();
 
-    const firstRequest = makeRequest({ recipient: '0xalice' });
-    const secondRequest = makeRequest({ recipient: '0xbob' });
+    const firstRequest = makeRequest({ recipient: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' });
+    const secondRequest = makeRequest({ recipient: 'GBZXN7PIRZGNMHGAH5Q4D5B4H3B7BWQ7M4CW67A4V6APSLW7M4Q6TLE5' });
 
     const witnessA = await ProofGenerator.prepareWitness(
       firstRequest.note,

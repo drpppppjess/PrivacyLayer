@@ -4,6 +4,8 @@ import path from 'path';
 import { Note } from '../src/note';
 import { MerkleProof, ProofGenerator, VerifyingBackend } from '../src/proof';
 import { verifyWithdrawalProof, extractPublicInputs } from '../src/withdraw';
+import { WithdrawalPublicInputs } from '../src/encoding';
+import { WitnessValidationError } from '../src/errors';
 
 class MockVerifyingBackend implements VerifyingBackend {
   constructor(private readonly expectedPublicInputs: string[]) {}
@@ -16,6 +18,31 @@ class MockVerifyingBackend implements VerifyingBackend {
     }
     return true;
   }
+}
+
+function makePublicInputs(overrides: Partial<WithdrawalPublicInputs> = {}): WithdrawalPublicInputs {
+  return {
+    pool_id: '11'.repeat(32),
+    root: '22'.repeat(32),
+    nullifier_hash: '33'.repeat(32),
+    recipient: '44'.repeat(32),
+    amount: '100',
+    relayer: '55'.repeat(32),
+    fee: '0',
+    ...overrides,
+  };
+}
+
+function asVerifierFieldList(publicInputs: WithdrawalPublicInputs): string[] {
+  return [
+    publicInputs.pool_id,
+    publicInputs.root,
+    publicInputs.nullifier_hash,
+    publicInputs.recipient,
+    publicInputs.amount,
+    publicInputs.relayer,
+    publicInputs.fee,
+  ];
 }
 
 describe('Verification Harness', () => {
@@ -33,15 +60,15 @@ describe('Verification Harness', () => {
 
   it('should verify a valid proof successfully', async () => {
     const proof = new Uint8Array(64).fill(0xab);
-    const publicInputs = ['pool', 'root', 'nullifier_hash', 'recipient', '100', 'relayer', '0'];
-    const backend = new MockVerifyingBackend(publicInputs);
+    const publicInputs = makePublicInputs();
+    const backend = new MockVerifyingBackend(asVerifierFieldList(publicInputs));
     const isValid = await verifyWithdrawalProof(proof, publicInputs, withdrawArtifact, backend);
     expect(isValid).toBe(true);
   });
 
   it('should fail verification for tampered proof bytes', async () => {
-    const publicInputs = ['pool', 'root', 'nullifier_hash', 'recipient', '100', 'relayer', '0'];
-    const backend = new MockVerifyingBackend(publicInputs);
+    const publicInputs = makePublicInputs();
+    const backend = new MockVerifyingBackend(asVerifierFieldList(publicInputs));
     const proof = new Uint8Array(64).fill(0xff);
     const isValid = await verifyWithdrawalProof(proof, publicInputs, withdrawArtifact, backend);
     expect(isValid).toBe(false);
@@ -57,12 +84,27 @@ describe('Verification Harness', () => {
     ['fee', 6],
   ])('should fail verification when %s is tampered', async (_label: string, idx: number) => {
     const proof = new Uint8Array(64).fill(0xab);
-    const good = ['pool', 'root', 'nullifier_hash', 'recipient', '100', 'relayer', '0'];
-    const backend = new MockVerifyingBackend(good);
-    const tampered = good.slice();
-    tampered[idx] = tampered[idx] + '_tampered';
+    const good = makePublicInputs();
+    const backend = new MockVerifyingBackend(asVerifierFieldList(good));
+    const tampered = { ...good };
+    const keys: (keyof WithdrawalPublicInputs)[] = ['pool_id', 'root', 'nullifier_hash', 'recipient', 'amount', 'relayer', 'fee'];
+    tampered[keys[idx]!] =
+      keys[idx] === 'amount' ? '101'
+      : keys[idx] === 'fee' ? '1'
+      : '66'.repeat(32);
     const isValid = await verifyWithdrawalProof(proof, tampered, withdrawArtifact, backend);
     expect(isValid).toBe(false);
+  });
+
+  it('rejects raw public-input arrays because schema order cannot be enforced', async () => {
+    await expect(
+      verifyWithdrawalProof(
+        new Uint8Array(64).fill(0xab),
+        ['pool', 'root', 'nullifier_hash', 'recipient', '100', 'relayer', '0'],
+        withdrawArtifact,
+        new MockVerifyingBackend([])
+      )
+    ).rejects.toThrow(WitnessValidationError);
   });
 
   it('should integrate generate and verify flow with extraction', async () => {

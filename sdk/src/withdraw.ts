@@ -1,3 +1,13 @@
+import { Note } from './note';
+import { MerkleProof, PreparedWitness, ProofCache, ProofGenerator, ProvingBackend, VerifyingBackend } from './proof';
+import { BatchSyncResult, CommitmentLike, LocalMerkleTree, MerkleCheckpoint, syncCommitmentBatch } from './merkle';
+import {
+  SerializedWithdrawalPublicInputs,
+  WithdrawalPublicInputs,
+  serializeWithdrawalPublicInputs,
+} from './encoding';
+import { stableHash32, stableStringify } from './stable';
+import { WitnessValidationError } from './errors';
 import { Note } from "./note";
 import {
   MerkleProof,
@@ -36,32 +46,30 @@ export interface WithdrawalProofGenerationOptions {
 }
 
 interface WithdrawalCacheMaterial {
-  note: {
+  privateInputs: {
     nullifier: string;
     secret: string;
-    pool: string;
-    denomination: string;
+    leaf_index: string;
+    hash_path: string[];
   };
-  root: string;
-  pool: string;
-  publicInputs: {
-    root: string;
-    nullifier_hash: string;
-    recipient: string;
-    amount: string;
-    relayer: string;
-    fee: string;
-  };
+  publicInputs: WithdrawalPublicInputs;
 }
+
+function buildCacheMaterial(witness: PreparedWitness): WithdrawalCacheMaterial {
+  const serialized = serializeWithdrawalPublicInputs(witness);
 
 function buildCacheMaterial(
   request: WithdrawalRequest,
   witness: PreparedWitness,
 ): WithdrawalCacheMaterial {
   return {
-    note: {
+    privateInputs: {
       nullifier: witness.nullifier,
       secret: witness.secret,
+      leaf_index: witness.leaf_index,
+      hash_path: witness.hash_path.slice(),
+    },
+    publicInputs: serialized.values
       pool: request.note.poolId,
       denomination: witness.amount,
     },
@@ -79,10 +87,12 @@ function buildCacheMaterial(
 }
 
 export function buildWithdrawalProofCacheKey(
+  _request: WithdrawalRequest,
+  witness: PreparedWitness
   request: WithdrawalRequest,
   witness: PreparedWitness,
 ): string {
-  const material = buildCacheMaterial(request, witness);
+  const material = buildCacheMaterial(witness);
   const canonical = stableStringify(material);
   return `withdraw-proof:${stableHash32("withdraw-proof-cache-v1", canonical).toString("hex")}`;
 }
@@ -102,6 +112,24 @@ export function restoreWithdrawalTree(
   checkpoint: MerkleCheckpoint,
 ): LocalMerkleTree {
   return LocalMerkleTree.fromCheckpoint(checkpoint);
+}
+
+function assertNamedWithdrawalPublicInputs(
+  publicInputs: WithdrawalPublicInputs | PreparedWitness | string[]
+): asserts publicInputs is WithdrawalPublicInputs | PreparedWitness {
+  if (Array.isArray(publicInputs)) {
+    throw new WitnessValidationError(
+      'Public inputs must be provided as named fields so canonical schema order can be enforced',
+      'PUBLIC_INPUT_SCHEMA',
+      'structure'
+    );
+  }
+}
+
+export function buildWithdrawalPublicInputLayout(
+  publicInputs: WithdrawalPublicInputs | PreparedWitness
+): SerializedWithdrawalPublicInputs {
+  return serializeWithdrawalPublicInputs(publicInputs);
 }
 
 /**
@@ -147,7 +175,7 @@ export async function generateWithdrawalProof(
   });
 
   // 3. Format the proof for the Soroban contract
-  const proof = ProofGenerator.formatProof(rawProof);
+  const proof = ProofGenerator.formatProof(rawProof, buildWithdrawalPublicInputLayout(witness).values);
   if (options.cache) {
     await options.cache.set(key, proof);
   }
@@ -161,6 +189,7 @@ export async function generateWithdrawalProof(
  * defined by WITHDRAWAL_PUBLIC_INPUT_SCHEMA (pool_id … fee).
  */
 export function extractPublicInputs(witness: PreparedWitness): string[] {
+  return buildWithdrawalPublicInputLayout(witness).fields;
   return [
     witness.pool_id, // 0
     witness.root, // 1
@@ -184,9 +213,10 @@ export function extractPublicInputs(witness: PreparedWitness): string[] {
  */
 export async function verifyWithdrawalProof(
   proof: Uint8Array,
-  publicInputs: string[],
+  publicInputs: WithdrawalPublicInputs | PreparedWitness | string[],
   artifacts: any,
   backend: VerifyingBackend,
 ): Promise<boolean> {
-  return backend.verifyProof(proof, publicInputs, artifacts);
+  assertNamedWithdrawalPublicInputs(publicInputs);
+  return backend.verifyProof(proof, buildWithdrawalPublicInputLayout(publicInputs).fields, artifacts);
 }

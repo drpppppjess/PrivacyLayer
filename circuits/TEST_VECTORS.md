@@ -193,6 +193,13 @@ Each vector captures:
 4. **Merkle witness** — `leaf_index`, `path_elements` (20 × 32 bytes), `root`
 5. **Nullifier hash** — `H(nullifier_field, root_field)` using the same algorithm
    as the circuit (`compute_nullifier_hash` in `circuits/lib/src/hash/nullifier.nr`)
+5. **Packed public inputs** — ordered as the circuit entrypoint expects:
+   `pool_id | root | nullifier_hash | recipient | amount | relayer | fee`
+
+The corpus intentionally does **not** embed portable note backup strings, legacy
+serialized note strings, full prepared witness payloads, or cache-helper blobs.
+Tests reconstruct those from the minimal fixture fields when needed so the vector
+file remains useful without normalizing extra note metadata into exported artifacts.
 6. **Packed public inputs** — ordered as the circuit entrypoint expects:
    `root | nullifier_hash | recipient | amount | relayer | fee`
 

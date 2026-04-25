@@ -13,6 +13,7 @@ export class WitnessValidationError extends Error {
       | 'FIELD_ENCODING'
       | 'ADDRESS'
       | 'WITNESS_SEMANTICS'
+      | 'PUBLIC_INPUT_SCHEMA'
       | 'PROOF_FORMAT',
     public readonly reason?: 'structure' | 'domain'
   ) {

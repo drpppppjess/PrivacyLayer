@@ -138,6 +138,73 @@ export const WITHDRAWAL_PUBLIC_INPUT_SCHEMA = [
 ] as const;
 
 export type WithdrawalPublicInputKey = (typeof WITHDRAWAL_PUBLIC_INPUT_SCHEMA)[number];
+export type WithdrawalPublicInputs = Record<WithdrawalPublicInputKey, string>;
+
+export interface SerializedWithdrawalPublicInputs {
+  values: WithdrawalPublicInputs;
+  fields: string[];
+  bytes: Buffer;
+}
+
+function assertCanonicalFieldHex(value: string, label: WithdrawalPublicInputKey): string {
+  const clean = value.startsWith('0x') ? value.slice(2) : value;
+  if (!/^[0-9a-fA-F]{64}$/.test(clean)) {
+    throw new Error(`${label} must be a 64-digit hex string`);
+  }
+  return clean.toLowerCase();
+}
+
+function assertCanonicalFieldDecimal(value: string, label: WithdrawalPublicInputKey): bigint {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${label} must be a non-negative decimal string`);
+  }
+  return BigInt(value);
+}
+
+function encodeWithdrawalPublicInputValue(
+  key: WithdrawalPublicInputKey,
+  value: string
+): Buffer {
+  switch (key) {
+    case 'amount':
+    case 'fee':
+      return fieldToBuffer(assertCanonicalFieldDecimal(value, key));
+    default:
+      return Buffer.from(assertCanonicalFieldHex(value, key), 'hex');
+  }
+}
+
+export function collectWithdrawalPublicInputs(
+  source: WithdrawalPublicInputs
+): WithdrawalPublicInputs {
+  const values = {} as WithdrawalPublicInputs;
+
+  for (const key of WITHDRAWAL_PUBLIC_INPUT_SCHEMA) {
+    const value = source[key];
+    if (typeof value !== 'string') {
+      throw new Error(`Missing public input: ${key}`);
+    }
+    values[key] = value;
+  }
+
+  return values;
+}
+
+/**
+ * Serialize the named withdrawal public inputs into the exact canonical
+ * field order and 32-byte big-endian byte layout consumed by verifier boundaries.
+ */
+export function serializeWithdrawalPublicInputs(
+  source: WithdrawalPublicInputs
+): SerializedWithdrawalPublicInputs {
+  const values = collectWithdrawalPublicInputs(source);
+  const fields = WITHDRAWAL_PUBLIC_INPUT_SCHEMA.map((key) => values[key]);
+  const bytes = Buffer.concat(
+    WITHDRAWAL_PUBLIC_INPUT_SCHEMA.map((key) => encodeWithdrawalPublicInputValue(key, values[key]))
+  );
+
+  return { values, fields, bytes };
+}
 
 /**
  * Pack the public inputs of the withdrawal circuit in the canonical order
@@ -154,5 +221,13 @@ export function packWithdrawalPublicInputs(
   relayer: string,
   fee: bigint
 ): string[] {
-  return [poolId, root, nullifierHash, recipient, amount.toString(), relayer, fee.toString()];
+  return serializeWithdrawalPublicInputs({
+    pool_id: poolId,
+    root,
+    nullifier_hash: nullifierHash,
+    recipient,
+    amount: amount.toString(),
+    relayer,
+    fee: fee.toString(),
+  }).fields;
 }

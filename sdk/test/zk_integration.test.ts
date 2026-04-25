@@ -20,7 +20,7 @@ class IntegrationProvingBackend implements ProvingBackend {
     }
 
     const digest = stableHash32('integration-proof', stableStringify(witness));
-    const proof = new Uint8Array(64);
+    const proof = new Uint8Array(256);
     proof.set(digest, 0);
     proof.set(digest, 32);
     proof[0] = 0xab;
@@ -30,7 +30,7 @@ class IntegrationProvingBackend implements ProvingBackend {
 
 class IntegrationVerifyingBackend implements VerifyingBackend {
   async verifyProof(proof: Uint8Array, publicInputs: string[]): Promise<boolean> {
-    if (proof.length !== 64 || proof[0] !== 0xab) {
+    if (proof.length !== 256 || proof[0] !== 0xab) {
       return false;
     }
 
@@ -46,16 +46,16 @@ const FIXTURES = {
     seed: 'zk-valid-fixture',
     poolId: '44'.repeat(32),
     amount: 1000n,
-    recipient: '0xrecipient-valid',
-    relayer: '0xrelayer-valid',
+    recipient: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+    relayer: 'GBZXN7PIRZGNMHGAH5Q4D5B4H3B7BWQ7M4CW67A4V6APSLW7M4Q6TLE5',
     fee: 5n
   },
   invalid: {
     seed: 'zk-invalid-fixture',
     poolId: '55'.repeat(32),
     amount: 500n,
-    recipient: '0xrecipient-invalid',
-    relayer: '0xrelayer-invalid',
+    recipient: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+    relayer: 'GBZXN7PIRZGNMHGAH5Q4D5B4H3B7BWQ7M4CW67A4V6APSLW7M4Q6TLE5',
     fee: 501n
   }
 };
@@ -93,13 +93,13 @@ describe('SDK ZK integration flow', () => {
     const publicInputs = extractPublicInputs(witness);
     const isValid = await verifyWithdrawalProof(
       proof,
-      publicInputs,
+      witness,
       { fixture: 'withdraw-artifact' },
       new IntegrationVerifyingBackend()
     );
 
     expect(isValid).toBe(true);
-    expect(proof.length).toBe(64);
+    expect(proof.length).toBe(256);
     expect(stableHash32('pi', stableStringify(publicInputs)).length).toBe(32);
   });
 

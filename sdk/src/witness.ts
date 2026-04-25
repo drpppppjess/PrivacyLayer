@@ -106,6 +106,14 @@ export function assertValidStellarAccountId(
  * Verifies a prepared witness object for structural safety and protocol consistency
  * (nullifier hash binding, fee / relayer rules) before a proving backend is invoked.
  */
+export function assertValidPreparedWithdrawalWitness(witness: PreparedWitness): void {
+  assertFieldHexString(witness.pool_id, 'pool_id');
+  assertFieldHexString(witness.nullifier, 'nullifier');
+  assertFieldHexString(witness.secret, 'secret');
+  assertFieldHexString(witness.root, 'root');
+  assertFieldHexString(witness.nullifier_hash, 'nullifier_hash');
+  assertFieldHexString(witness.recipient, 'recipient');
+  assertFieldHexString(witness.relayer, 'relayer');
 export function assertValidPreparedWithdrawalWitness(
   witness: PreparedWitness,
   options: WitnessValidationOptions = {},

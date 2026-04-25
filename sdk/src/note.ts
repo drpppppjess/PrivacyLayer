@@ -7,6 +7,12 @@ import {
   NOTE_SCALAR_BYTE_LENGTH,
 } from './zk_constants';
 
+const HEX_PAYLOAD = /^[0-9a-fA-F]+$/;
+const POOL_ID_HEX = /^[0-9a-fA-F]{64}$/;
+const LEGACY_NOTE_PREFIX = 'privacylayer-note-';
+const LEGACY_NOTE_PAYLOAD_LENGTH = NOTE_SCALAR_BYTE_LENGTH + NOTE_SCALAR_BYTE_LENGTH + 32 + 16;
+const MAX_NOTE_AMOUNT = (1n << 64n) - 1n;
+
 type CryptoLike = {
   getRandomValues<T extends ArrayBufferView | null>(array: T): T;
 };
@@ -105,6 +111,12 @@ export class Note {
     if (nullifier.length !== NOTE_SCALAR_BYTE_LENGTH || secret.length !== NOTE_SCALAR_BYTE_LENGTH) {
       throw new Error(`Nullifier and secret must be ${NOTE_SCALAR_BYTE_LENGTH} bytes to fit BN254 field`);
     }
+    if (!POOL_ID_HEX.test(poolId)) {
+      throw new Error('Pool ID must be exactly 32 bytes encoded as 64 hex characters');
+    }
+    if (amount < 0n || amount > MAX_NOTE_AMOUNT) {
+      throw new Error(`Note amount must fit within an unsigned 64-bit integer, got ${amount}`);
+    }
   }
 
   /**
@@ -195,6 +207,16 @@ export class Note {
     }
 
     const hex = backup.slice(NOTE_BACKUP_PREFIX.length);
+    if (!HEX_PAYLOAD.test(hex)) {
+      throw new NoteBackupError('Note backup contains invalid hex data', 'CORRUPT_DATA');
+    }
+    if (hex.length !== NOTE_BACKUP_PAYLOAD_LENGTH * 2) {
+      throw new NoteBackupError(
+        `Note backup payload must be ${NOTE_BACKUP_PAYLOAD_LENGTH} bytes, got ${Math.floor(hex.length / 2)}`,
+        'INVALID_LENGTH'
+      );
+    }
+
     let payload: Buffer;
     try {
       payload = Buffer.from(hex, 'hex');
@@ -250,17 +272,20 @@ export class Note {
       Buffer.alloc(16), // amount padding
     ]);
     data.writeBigUInt64BE(this.amount, 31 + 31 + 32);
-    return `privacylayer-note-${data.toString('hex')}`;
+    return LEGACY_NOTE_PREFIX + data.toString('hex');
   }
 
   /**
    * @deprecated Use `Note.importBackup` for new code.
    */
   static deserialize(noteStr: string): Note {
-    if (!noteStr.startsWith('privacylayer-note-')) {
+    if (!noteStr.startsWith(LEGACY_NOTE_PREFIX)) {
       throw new Error('Invalid note format');
     }
-    const hex = noteStr.replace('privacylayer-note-', '');
+    const hex = noteStr.slice(LEGACY_NOTE_PREFIX.length);
+    if (!HEX_PAYLOAD.test(hex) || hex.length !== LEGACY_NOTE_PAYLOAD_LENGTH * 2) {
+      throw new Error('Invalid note format');
+    }
     const data = Buffer.from(hex, 'hex');
 
     const nullifier = data.subarray(0, 31);
