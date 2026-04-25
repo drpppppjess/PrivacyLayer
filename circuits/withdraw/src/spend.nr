@@ -24,6 +24,7 @@ use lib::validation;
 pub fn verify_withdrawal_constraints(
     nullifier: Field,
     secret: Field,
+    pool_id: Field,
     leaf_index: Field,
     hash_path: [Field; 20],
     root: Field,
@@ -33,8 +34,8 @@ pub fn verify_withdrawal_constraints(
     relayer: Field,
     fee: Field,
 ) {
-    // Step 1: Reconstruct commitment from note secret and nullifier
-    let commitment = hash::compute_commitment(nullifier, secret);
+    // Step 1: Reconstruct commitment from note secret, nullifier and pool_id
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     // Step 2: Prove commitment is in the tree
     // (includes leaf_index range validation)
@@ -59,75 +60,75 @@ mod tests {
 
     #[test]
     fn test_spend_constraints_happy_path() {
-        let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
+        let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
             setup_valid_withdrawal();
 
         // Should not panic
         verify_withdrawal_constraints(
-            nullifier, secret, leaf_index, hash_path, root,
+            nullifier, secret, pool_id, leaf_index, hash_path, root,
             nullifier_hash, recipient, 1_000_000, relayer, fee
         );
     }
 
     #[test(should_fail)]
     fn test_spend_constraints_wrong_commitment() {
-        let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
+        let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
             setup_valid_withdrawal();
 
         let wrong_secret = secret + 1;
         // Commitment mismatch will cause merkle verification to fail
         verify_withdrawal_constraints(
-            nullifier, wrong_secret, leaf_index, hash_path, root,
+            nullifier, wrong_secret, pool_id, leaf_index, hash_path, root,
             nullifier_hash, recipient, 1_000_000, relayer, fee
         );
     }
 
     #[test(should_fail)]
     fn test_spend_constraints_invalid_merkle_path() {
-        let (nullifier, secret, leaf_index, mut hash_path, root, nullifier_hash, recipient, relayer, fee) =
+        let (nullifier, secret, pool_id, leaf_index, mut hash_path, root, nullifier_hash, recipient, relayer, fee) =
             setup_valid_withdrawal();
 
         // Corrupt merkle path
         hash_path[0] = hash_path[0] + 1;
         verify_withdrawal_constraints(
-            nullifier, secret, leaf_index, hash_path, root,
+            nullifier, secret, pool_id, leaf_index, hash_path, root,
             nullifier_hash, recipient, 1_000_000, relayer, fee
         );
     }
 
     #[test(should_fail)]
     fn test_spend_constraints_invalid_nullifier_hash() {
-        let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
+        let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee) =
             setup_valid_withdrawal();
 
         let wrong_nullifier_hash = nullifier_hash + 1;
         verify_withdrawal_constraints(
-            nullifier, secret, leaf_index, hash_path, root,
+            nullifier, secret, pool_id, leaf_index, hash_path, root,
             wrong_nullifier_hash, recipient, 1_000_000, relayer, fee
         );
     }
 
     #[test(should_fail)]
     fn test_spend_constraints_fee_exceeds_amount() {
-        let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, _) =
+        let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, _) =
             setup_valid_withdrawal();
 
         let amount = 100;
         let fee = 101;
         verify_withdrawal_constraints(
-            nullifier, secret, leaf_index, hash_path, root,
+            nullifier, secret, pool_id, leaf_index, hash_path, root,
             nullifier_hash, recipient, amount, relayer, fee
         );
     }
 
     #[test(should_fail)]
     fn test_spend_constraints_relayer_without_fee() {
-        let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, _) =
+        let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, _) =
             setup_valid_withdrawal();
 
         let non_zero_relayer = relayer + 1;
         verify_withdrawal_constraints(
-            nullifier, secret, leaf_index, hash_path, root,
+            nullifier, secret, pool_id, leaf_index, hash_path, root,
             nullifier_hash, recipient, 1_000_000, non_zero_relayer, 0
         );
     }

@@ -32,8 +32,10 @@ pub global KAT_SECRET: Field = 2;
 pub global KAT_LEAF_INDEX: Field = 0;
 /// Standard withdrawal amount: 100 XLM in stroops.
 pub global KAT_AMOUNT: Field = 100_0000000;
-/// Canonical recipient field value.
+/// Canonical test recipient field value.
 pub global KAT_RECIPIENT: Field = 0xABCD;
+/// Canonical test pool identifier.
+pub global KAT_POOL_ID: Field = 1;
 
 // ============================================================
 // Fixture Builder Functions
@@ -41,25 +43,30 @@ pub global KAT_RECIPIENT: Field = 0xABCD;
 
 /// Build a complete, valid withdrawal proof fixture for leaf at index 0.
 ///
-/// Returns (nullifier, secret, leaf_index, hash_path, root, nullifier_hash)
+/// Returns (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash)
 /// for use in withdrawal circuit tests.
-///
-/// Example:
-/// ```noir
-/// let f = test_helpers::build_valid_fixture();
-/// main(f.0, f.1, f.2, f.3, f.4, f.5, recipient, amount, 0, 0);
-/// ```
-pub fn build_valid_fixture() -> (Field, Field, Field, [Field; 20], Field, Field) {
+pub fn build_valid_fixture() -> (Field, Field, Field, Field, [Field; 20], Field, Field) {
     let nullifier: Field = KAT_NULLIFIER;
     let secret: Field    = KAT_SECRET;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = KAT_POOL_ID;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     let leaf_index: Field = KAT_LEAF_INDEX;
 
     let hash_path: [Field; 20] = [0; 20];
     let root = merkle::compute_root(commitment, leaf_index, hash_path);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
-    (nullifier, secret, leaf_index, hash_path, root, nullifier_hash)
+    (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash)
+}
+
+/// Setup a complete valid withdrawal with all public parameters.
+/// Returns (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee)
+pub fn setup_valid_withdrawal() -> (Field, Field, Field, Field, [Field; 20], Field, Field, Field, Field, Field) {
+    let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash) = build_valid_fixture();
+    let recipient = KAT_RECIPIENT;
+    let relayer = 0;
+    let fee = 0;
+    (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash, recipient, relayer, fee)
 }
 
 /// Build a withdrawal fixture for a leaf at an arbitrary index.
@@ -68,9 +75,10 @@ pub fn build_valid_fixture() -> (Field, Field, Field, [Field; 20], Field, Field)
 pub fn build_fixture_at_index(
     nullifier: Field,
     secret: Field,
+    pool_id: Field,
     leaf_index: Field,
 ) -> ([Field; 20], Field, Field) {
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     let hash_path: [Field; 20] = [0; 20];
     let root = merkle::compute_root(commitment, leaf_index, hash_path);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
@@ -128,10 +136,10 @@ pub fn tamper_path(path: [Field; 20], level: Field) -> [Field; 20] {
 /// Commitment re-derived from nullifier/secret must match the tree leaf.
 #[test]
 fn test_build_valid_fixture_is_consistent() {
-    let (nullifier, secret, leaf_index, hash_path, root, nullifier_hash) = build_valid_fixture();
+    let (nullifier, secret, pool_id, leaf_index, hash_path, root, nullifier_hash) = build_valid_fixture();
 
     // Re-derive all values and verify consistency
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     let recomputed_root = merkle::compute_root(commitment, leaf_index, hash_path);
     let recomputed_nh   = hash::compute_nullifier_hash(nullifier, root);
 
@@ -173,12 +181,13 @@ fn test_tamper_path_changes_root() {
 fn test_build_fixture_at_high_index() {
     let nullifier: Field = 0x5555;
     let secret: Field    = 0x6666;
+    let pool_id: Field   = 0x7777;
     let leaf_index: Field = 524288; // bit 19 only: 0b10...0
 
-    let (hash_path, root, nullifier_hash) = build_fixture_at_index(nullifier, secret, leaf_index);
+    let (hash_path, root, nullifier_hash) = build_fixture_at_index(nullifier, secret, pool_id, leaf_index);
 
     // Verify consistency
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     let recomputed_root = merkle::compute_root(commitment, leaf_index, hash_path);
     let recomputed_nh   = hash::compute_nullifier_hash(nullifier, root);
 

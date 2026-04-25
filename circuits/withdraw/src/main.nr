@@ -31,6 +31,7 @@ mod spend;
 /// - `hash_path`  : Merkle authentication path (siblings at each level)
 ///
 /// # Public inputs (verified on-chain)
+/// - `pool_id`        : unique identifier for the shielded pool
 /// - `root`           : Merkle root that proves membership
 /// - `nullifier_hash` : Hash(nullifier, root) - prevents double-spend
 /// - `recipient`      : Stellar address hash - prevents front-running
@@ -45,6 +46,7 @@ fn main(
     hash_path: [Field; 20],
 
     // --- Public inputs ---
+    pool_id: pub Field,
     root: pub Field,
     nullifier_hash: pub Field,
     recipient: pub Field,
@@ -56,6 +58,7 @@ fn main(
     spend::verify_withdrawal_constraints(
         nullifier,
         secret,
+        pool_id,
         leaf_index,
         hash_path,
         root,
@@ -106,14 +109,15 @@ fn build_simple_path(leaf: Field) -> ([Field; 20], Field) {
 fn test_valid_withdrawal() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     main(
         nullifier, secret, 0, hash_path,
-        root, nullifier_hash, 0xABCD, 100_0000000, 0, 0,
+        pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0,
     );
 }
 
@@ -123,14 +127,15 @@ fn test_valid_withdrawal() {
 fn test_withdrawal_with_relayer_fee() {
     let nullifier: Field = 333;
     let secret: Field    = 444;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     main(
         nullifier, secret, 0, hash_path,
-        root, nullifier_hash,
+        pool_id, root, nullifier_hash,
         0xDEAD,        // recipient
         100_0000000,   // 100 XLM
         0xBEEF,        // relayer
@@ -144,7 +149,8 @@ fn test_withdrawal_with_relayer_fee() {
 fn test_withdrawal_fee_equals_amount() {
     let nullifier: Field = 555;
     let secret: Field    = 666;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
@@ -153,7 +159,7 @@ fn test_withdrawal_fee_equals_amount() {
     // fee == amount is valid (relayer takes everything, recipient gets 0)
     main(
         nullifier, secret, 0, hash_path,
-        root, nullifier_hash, 0xABCD, amount, 0xBEEF, amount,
+        pool_id, root, nullifier_hash, 0xABCD, amount, 0xBEEF, amount,
     );
 }
 
@@ -163,7 +169,8 @@ fn test_withdrawal_fee_equals_amount() {
 fn test_withdrawal_nonzero_leaf_index() {
     let nullifier: Field = 777;
     let secret: Field    = 888;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     let leaf_index: Field = 7; // binary: 0b0...0111
 
     let (hash_path, root) = build_path_at(commitment, leaf_index);
@@ -171,7 +178,7 @@ fn test_withdrawal_nonzero_leaf_index() {
 
     main(
         nullifier, secret, leaf_index, hash_path,
-        root, nullifier_hash, 0x1111, 100_0000000, 0, 0,
+        pool_id, root, nullifier_hash, 0x1111, 100_0000000, 0, 0,
     );
 }
 
@@ -185,13 +192,14 @@ fn test_withdrawal_nonzero_leaf_index() {
 fn test_wrong_secret_fails() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     // Wrong secret changes commitment -> Merkle inclusion fails
-    main(nullifier, 999, 0, hash_path, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, 999, 0, hash_path, pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-06: Wrong root -- the provided root was never a valid on-chain root.
@@ -200,14 +208,15 @@ fn test_wrong_secret_fails() {
 fn test_wrong_root_fails() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, _real_root) = build_simple_path(commitment);
     let wrong_root: Field = 9999;
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, wrong_root);
 
     // Wrong root - Merkle inclusion fails
-    main(nullifier, secret, 0, hash_path, wrong_root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, wrong_root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-07: Wrong leaf index with valid Merkle path for index 0.
@@ -216,14 +225,15 @@ fn test_wrong_root_fails() {
 fn test_wrong_leaf_index_fails() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     // Path/root computed for leaf at index 0
     let (hash_path, root) = build_path_at(commitment, 0);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     // Claim the leaf is at index 1 -> recomputed root won't match
-    main(nullifier, secret, 1, hash_path, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 1, hash_path, pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-08: Tampered sibling in the auth path -- one sibling is altered.
@@ -232,28 +242,30 @@ fn test_wrong_leaf_index_fails() {
 fn test_tampered_auth_path_fails() {
     let nullifier: Field = 321;
     let secret: Field    = 654;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (mut hash_path, root) = build_simple_path(commitment);
     // Tamper with sibling at level 3
     hash_path[3] = 0xdeadbeef;
 
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
-/// TC-W-09: Zero commitment (nullifier=0, secret=0) is still valid if the tree
+/// TC-W-09: Zero commitment (nullifier=0, secret=0, pool_id=0) is still valid if the tree
 /// actually contains that commitment. The circuit should not special-case zero.
 #[test]
 fn test_zero_commitment_valid_if_in_tree() {
     let nullifier: Field = 0;
     let secret: Field    = 0;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 0;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-10: Proof for leaf at maximum index (all bits set in 20-bit index = 2^20 - 1).
@@ -262,7 +274,8 @@ fn test_zero_commitment_valid_if_in_tree() {
 fn test_max_leaf_index() {
     let nullifier: Field = 0xAA;
     let secret: Field    = 0xBB;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
     // 2^20 - 1 = 1048575 -- rightmost leaf in the tree
     let leaf_index: Field = 1048575;
 
@@ -271,7 +284,7 @@ fn test_max_leaf_index() {
 
     main(
         nullifier, secret, leaf_index, hash_path,
-        root, nullifier_hash, 0xFFFF, 100_0000000, 0, 0,
+        pool_id, root, nullifier_hash, 0xFFFF, 100_0000000, 0, 0,
     );
 }
 
@@ -285,13 +298,14 @@ fn test_max_leaf_index() {
 fn test_wrong_nullifier_hash_fails() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let wrong_nullifier_hash: Field = 54321; // fabricated
 
     // Correct Merkle proof but wrong nullifier_hash
-    main(nullifier, secret, 0, hash_path, root, wrong_nullifier_hash, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, wrong_nullifier_hash, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-12: Nullifier_hash derived from a different nullifier.
@@ -300,13 +314,14 @@ fn test_wrong_nullifier_hash_fails() {
 fn test_nullifier_hash_from_different_nullifier_fails() {
     let nullifier: Field  = 111;
     let secret: Field     = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field    = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     // Compute nullifier_hash using a different nullifier
     let wrong_nh = hash::compute_nullifier_hash(9999, root);
 
-    main(nullifier, secret, 0, hash_path, root, wrong_nh, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, wrong_nh, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-13: Nullifier_hash computed for a different root (cross-root replay attempt).
@@ -315,7 +330,8 @@ fn test_nullifier_hash_from_different_nullifier_fails() {
 fn test_nullifier_hash_bound_to_root() {
     let nullifier: Field  = 111;
     let secret: Field     = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field    = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
 
@@ -324,7 +340,7 @@ fn test_nullifier_hash_bound_to_root() {
     let stale_nh = hash::compute_nullifier_hash(nullifier, stale_root);
 
     // Merkle inclusion uses real root, but nullifier_hash uses stale root -> mismatch
-    main(nullifier, secret, 0, hash_path, root, stale_nh, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, stale_nh, 0xABCD, 100_0000000, 0, 0);
 }
 
 /// TC-W-14: Zero nullifier_hash -- attacker submits 0 hoping it's skipped.
@@ -332,11 +348,12 @@ fn test_nullifier_hash_bound_to_root() {
 fn test_zero_nullifier_hash_fails() {
     let nullifier: Field = 111;
     let secret: Field    = 222;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
 
-    main(nullifier, secret, 0, hash_path, root, 0, 0xABCD, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, 0, 0xABCD, 100_0000000, 0, 0);
 }
 
 // ------------------------------------------------------------
@@ -349,13 +366,14 @@ fn test_zero_nullifier_hash_fails() {
 fn test_fee_exceeds_amount_fails() {
     let nullifier: Field = 555;
     let secret: Field    = 666;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     // fee (100) > amount (10) -- should fail
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xABCD, 10, 0xBEEF, 100);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xABCD, 10, 0xBEEF, 100);
 }
 
 /// TC-W-16: Non-zero relayer address with zero fee -- must fail.
@@ -364,13 +382,14 @@ fn test_fee_exceeds_amount_fails() {
 fn test_nonzero_relayer_with_zero_fee_fails() {
     let nullifier: Field = 777;
     let secret: Field    = 888;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     // Non-zero relayer with zero fee - should fail
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xABCD, 100_0000000, 0xBEEF, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xABCD, 100_0000000, 0xBEEF, 0);
 }
 
 /// TC-W-17: Zero fee AND zero relayer -- valid (no relayer path).
@@ -379,12 +398,13 @@ fn test_nonzero_relayer_with_zero_fee_fails() {
 fn test_zero_fee_zero_relayer_valid() {
     let nullifier: Field = 123;
     let secret: Field    = 456;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xCC, 100_0000000, 0, 0);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xCC, 100_0000000, 0, 0);
 }
 
 /// TC-W-18: Maximum fee with non-zero amount (fee == 1, amount == 1).
@@ -393,13 +413,14 @@ fn test_zero_fee_zero_relayer_valid() {
 fn test_unit_amount_unit_fee_valid() {
     let nullifier: Field = 987;
     let secret: Field    = 654;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 1;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     // fee == amount == 1 (minimum non-zero -- boundary condition)
-    main(nullifier, secret, 0, hash_path, root, nullifier_hash, 0xBB, 1, 0xAA, 1);
+    main(nullifier, secret, 0, hash_path, pool_id, root, nullifier_hash, 0xBB, 1, 0xAA, 1);
 }
 
 // ------------------------------------------------------------
@@ -412,14 +433,15 @@ fn test_unit_amount_unit_fee_valid() {
 fn test_withdrawal_large_field_values() {
     let nullifier: Field = 0x00000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
     let secret: Field    = 0x0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-    let commitment = hash::compute_commitment(nullifier, secret);
+    let pool_id: Field   = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+    let commitment = hash::compute_commitment(nullifier, secret, pool_id);
 
     let (hash_path, root) = build_simple_path(commitment);
     let nullifier_hash = hash::compute_nullifier_hash(nullifier, root);
 
     main(
         nullifier, secret, 0, hash_path,
-        root, nullifier_hash, 0x1234567890ABCDEF, 999_0000000, 0, 0,
+        pool_id, root, nullifier_hash, 0x1234567890ABCDEF, 999_0000000, 0, 0,
     );
 }
 
@@ -427,13 +449,14 @@ fn test_withdrawal_large_field_values() {
 /// Both proofs are valid; nullifier_hashes differ because nullifiers differ.
 #[test]
 fn test_two_notes_same_root_both_valid() {
+    let pool_id: Field = 1;
     // Note 1
     let n1: Field = 0xAA; let s1: Field = 0xBB;
-    let c1 = hash::compute_commitment(n1, s1);
+    let c1 = hash::compute_commitment(n1, s1, pool_id);
 
     // Note 2
     let n2: Field = 0xCC; let s2: Field = 0xDD;
-    let c2 = hash::compute_commitment(n2, s2);
+    let c2 = hash::compute_commitment(n2, s2, pool_id);
 
     // Place both commitments in the same tree (index 0 and 1)
     let mut path1: [Field; 20] = [0; 20];
@@ -451,8 +474,8 @@ fn test_two_notes_same_root_both_valid() {
     let nh1 = hash::compute_nullifier_hash(n1, root);
     let nh2 = hash::compute_nullifier_hash(n2, root);
 
-    main(n1, s1, 0, path1, root, nh1, 0xA1, 1_0000000, 0, 0);
-    main(n2, s2, 1, path2, root, nh2, 0xA2, 1_0000000, 0, 0);
+    main(n1, s1, 0, path1, pool_id, root, nh1, 0xA1, 1_0000000, 0, 0);
+    main(n2, s2, 1, path2, pool_id, root, nh2, 0xA2, 1_0000000, 0, 0);
 }
 
 /// TC-W-21: Nullifier hashes for same nullifier in different roots must differ.
