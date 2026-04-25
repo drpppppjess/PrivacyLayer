@@ -1,4 +1,4 @@
-import { Note } from './note';
+import { Note } from "./note";
 import {
   WithdrawalPublicInputs,
   merkleNodeToField,
@@ -7,16 +7,24 @@ import {
   computeNullifierHash,
   serializeWithdrawalPublicInputs,
   stellarAddressToField,
-} from './encoding';
-import { WitnessValidationError } from './errors';
-import { assertValidGroth16ProofBytes, assertValidPreparedWithdrawalWitness } from './witness';
-import { MERKLE_TREE_DEPTH, STELLAR_ZERO_ACCOUNT, ZERO_FIELD_HEX } from './zk_constants';
+} from "./encoding";
+import { WitnessValidationError } from "./errors";
+import {
+  assertValidGroth16ProofBytes,
+  assertValidPreparedWithdrawalWitness,
+} from "./witness";
+import { STELLAR_ZERO_ACCOUNT, ZERO_FIELD_HEX } from "./zk_constants";
+import {
+  PRODUCTION_MERKLE_TREE_DEPTH,
+  assertMerkleDepth,
+  merkleMaxLeafIndex,
+} from "./merkle";
 
 export type ProvingErrorCode =
-  | 'ARTIFACT_ERROR'
-  | 'WITNESS_ERROR'
-  | 'BACKEND_ERROR'
-  | 'FORMATTING_ERROR';
+  | "ARTIFACT_ERROR"
+  | "WITNESS_ERROR"
+  | "BACKEND_ERROR"
+  | "FORMATTING_ERROR";
 
 /**
  * ProvingError
@@ -27,10 +35,10 @@ export class ProvingError extends Error {
   constructor(
     message: string,
     public readonly code: ProvingErrorCode,
-    public readonly cause?: any
+    public readonly cause?: any,
   ) {
     super(message);
-    this.name = 'ProvingError';
+    this.name = "ProvingError";
   }
 }
 
@@ -68,7 +76,9 @@ export interface WithdrawalWitness {
 }
 
 export interface ProofCache {
-  get(key: string): Promise<Uint8Array | Buffer | undefined> | Uint8Array | Buffer | undefined;
+  get(
+    key: string,
+  ): Promise<Uint8Array | Buffer | undefined> | Uint8Array | Buffer | undefined;
   set(key: string, proof: Uint8Array | Buffer): Promise<void> | void;
   delete?(key: string): Promise<void> | void;
 }
@@ -93,7 +103,6 @@ export class InMemoryProofCache implements ProofCache {
     this.entries.delete(key);
   }
 }
-
 
 /**
  * ProvingBackend
@@ -123,7 +132,11 @@ export interface VerifyingBackend {
    * @param artifacts The circuit artifacts (vkey, acir, etc).
    * @returns A boolean indicating if the proof is valid.
    */
-  verifyProof(proof: Uint8Array, publicInputs: string[], artifacts: any): Promise<boolean>;
+  verifyProof(
+    proof: Uint8Array,
+    publicInputs: string[],
+    artifacts: any,
+  ): Promise<boolean>;
 }
 
 /**
@@ -177,6 +190,8 @@ function canonicalizePreparedWitness(witness: PreparedWitness): PreparedWitness 
     relayer: witness.relayer,
     fee: witness.fee,
   };
+export interface WitnessPreparationOptions {
+  merkleDepth?: number;
 }
 
 /**
@@ -202,23 +217,34 @@ export class ProofGenerator {
   /**
    * Generates a proof using the configured backend.
    */
-  async generate(witness: any): Promise<Uint8Array> {
+  async generate(
+    witness: any,
+    options: WitnessPreparationOptions = {},
+  ): Promise<Uint8Array> {
     if (!this.backend) {
       throw new ProvingError(
-        'Proving backend not configured. Please provide a backend to the ProofGenerator.',
-        'BACKEND_ERROR'
+        "Proving backend not configured. Please provide a backend to the ProofGenerator.",
+        "BACKEND_ERROR",
       );
     }
     try {
-      assertValidPreparedWithdrawalWitness(witness);
+      assertValidPreparedWithdrawalWitness(witness, options);
     } catch (e: any) {
-      throw new ProvingError(`Invalid witness: ${e.message}`, 'WITNESS_ERROR', e);
+      throw new ProvingError(
+        `Invalid witness: ${e.message}`,
+        "WITNESS_ERROR",
+        e,
+      );
     }
 
     try {
       return await this.backend.generateProof(canonicalizePreparedWitness(witness));
     } catch (e: any) {
-      throw new ProvingError(`Backend proof generation failed: ${e.message}`, 'BACKEND_ERROR', e);
+      throw new ProvingError(
+        `Backend proof generation failed: ${e.message}`,
+        "BACKEND_ERROR",
+        e,
+      );
     }
   }
 
@@ -237,40 +263,68 @@ export class ProofGenerator {
     merkleProof: MerkleProof,
     recipient: string,
     relayer: string = STELLAR_ZERO_ACCOUNT,
-    fee: bigint = 0n
+    fee: bigint = 0n,
+    options: WitnessPreparationOptions = {},
   ): Promise<PreparedWitness> {
-    if (
-      merkleProof.pathIndices !== undefined &&
-      merkleProof.pathIndices.length > 0 &&
-      merkleProof.pathIndices.length !== MERKLE_TREE_DEPTH
-    ) {
+    const expectedDepth = assertMerkleDepth(
+      options.merkleDepth ?? PRODUCTION_MERKLE_TREE_DEPTH,
+      "merkleDepth",
+    );
+
+    if (merkleProof.pathElements.length !== expectedDepth) {
       throw new WitnessValidationError(
-        `pathIndices length must equal tree depth ${MERKLE_TREE_DEPTH}, got ${merkleProof.pathIndices.length}`,
-        'MERKLE_PATH',
-        'structure'
+        `pathElements length must equal tree depth ${expectedDepth}, got ${merkleProof.pathElements.length}`,
+        "MERKLE_PATH",
+        "structure",
       );
     }
 
-    const rootField       = merkleNodeToField(merkleProof.root);
-    const nullifierField  = noteScalarToField(note.nullifier);
-    const secretField     = noteScalarToField(note.secret);
-    const poolIdField     = poolIdToField(note.poolId);
-    const nullifierHash   = computeNullifierHash(nullifierField, rootField);
-    const recipientField  = stellarAddressToField(recipient);
-    const relayerField    = fee === 0n ? ZERO_FIELD_HEX : stellarAddressToField(relayer);
+    if (
+      merkleProof.pathIndices !== undefined &&
+      merkleProof.pathIndices.length > 0 &&
+      merkleProof.pathIndices.length !== expectedDepth
+    ) {
+      throw new WitnessValidationError(
+        `pathIndices length must equal tree depth ${expectedDepth}, got ${merkleProof.pathIndices.length}`,
+        "MERKLE_PATH",
+        "structure",
+      );
+    }
+
+    const maxLeafIndex = merkleMaxLeafIndex(expectedDepth);
+    if (
+      !Number.isInteger(merkleProof.leafIndex) ||
+      merkleProof.leafIndex < 0 ||
+      merkleProof.leafIndex > maxLeafIndex
+    ) {
+      throw new WitnessValidationError(
+        `leafIndex out of range for tree depth (max ${maxLeafIndex})`,
+        "LEAF_INDEX",
+        "domain",
+      );
+    }
+
+    const rootField = merkleNodeToField(merkleProof.root);
+    const nullifierField = noteScalarToField(note.nullifier);
+    const secretField = noteScalarToField(note.secret);
+    const poolIdField = poolIdToField(note.poolId);
+    const nullifierHash = computeNullifierHash(nullifierField, rootField);
+    const recipientField = stellarAddressToField(recipient);
+    const relayerField =
+      fee === 0n ? ZERO_FIELD_HEX : stellarAddressToField(relayer);
 
     return {
-      nullifier:     nullifierField,
-      secret:        secretField,
-      leaf_index:    merkleProof.leafIndex.toString(),
-      hash_path:     merkleProof.pathElements.map((e) => merkleNodeToField(e)),
-      pool_id:       poolIdField,
-      root:          rootField,
+      nullifier: nullifierField,
+      secret: secretField,
+      leaf_index: merkleProof.leafIndex.toString(),
+      hash_path: merkleProof.pathElements.map((e) => merkleNodeToField(e)),
+      pool_id: poolIdField,
+      root: rootField,
       nullifier_hash: nullifierHash,
-      recipient:     recipientField,
-      amount:        note.amount.toString(),
-      relayer:       relayerField,
-      fee:           fee.toString(),
+      recipient: recipientField,
+      amount: note.amount.toString(),
+      relayer: relayerField,
+      fee: fee.toString(),
     };
   }
 
@@ -283,9 +337,13 @@ export class ProofGenerator {
     publicInputs: WithdrawalPublicInputs
   ): Groth16Proof {
     try {
-      assertValidGroth16ProofBytes(rawProof, 'rawProof');
+      assertValidGroth16ProofBytes(rawProof, "rawProof");
     } catch (e: any) {
-      throw new ProvingError(`Invalid proof format from backend: ${e.message}`, 'FORMATTING_ERROR', e);
+      throw new ProvingError(
+        `Invalid proof format from backend: ${e.message}`,
+        "FORMATTING_ERROR",
+        e,
+      );
     }
 
     try {

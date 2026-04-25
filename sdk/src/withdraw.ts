@@ -8,10 +8,27 @@ import {
 } from './encoding';
 import { stableHash32, stableStringify } from './stable';
 import { WitnessValidationError } from './errors';
+import { Note } from "./note";
+import {
+  MerkleProof,
+  PreparedWitness,
+  ProofCache,
+  ProofGenerator,
+  ProvingBackend,
+  VerifyingBackend,
+} from "./proof";
+import {
+  BatchSyncResult,
+  CommitmentLike,
+  LocalMerkleTree,
+  MerkleCheckpoint,
+  syncCommitmentBatch,
+} from "./merkle";
+import { stableHash32, stableStringify } from "./stable";
 
 /**
  * WithdrawalRequest
- * 
+ *
  * Parameters for generating a withdrawal proof.
  */
 export interface WithdrawalRequest {
@@ -25,6 +42,7 @@ export interface WithdrawalRequest {
 export interface WithdrawalProofGenerationOptions {
   cache?: ProofCache;
   cacheKey?: string;
+  merkleDepth?: number;
 }
 
 interface WithdrawalCacheMaterial {
@@ -40,6 +58,10 @@ interface WithdrawalCacheMaterial {
 function buildCacheMaterial(witness: PreparedWitness): WithdrawalCacheMaterial {
   const serialized = serializeWithdrawalPublicInputs(witness);
 
+function buildCacheMaterial(
+  request: WithdrawalRequest,
+  witness: PreparedWitness,
+): WithdrawalCacheMaterial {
   return {
     privateInputs: {
       nullifier: witness.nullifier,
@@ -48,16 +70,31 @@ function buildCacheMaterial(witness: PreparedWitness): WithdrawalCacheMaterial {
       hash_path: witness.hash_path.slice(),
     },
     publicInputs: serialized.values
+      pool: request.note.poolId,
+      denomination: witness.amount,
+    },
+    root: witness.root,
+    pool: request.note.poolId,
+    publicInputs: {
+      root: witness.root,
+      nullifier_hash: witness.nullifier_hash,
+      recipient: witness.recipient,
+      amount: witness.amount,
+      relayer: witness.relayer,
+      fee: witness.fee,
+    },
   };
 }
 
 export function buildWithdrawalProofCacheKey(
   _request: WithdrawalRequest,
   witness: PreparedWitness
+  request: WithdrawalRequest,
+  witness: PreparedWitness,
 ): string {
   const material = buildCacheMaterial(witness);
   const canonical = stableStringify(material);
-  return `withdraw-proof:${stableHash32('withdraw-proof-cache-v1', canonical).toString('hex')}`;
+  return `withdraw-proof:${stableHash32("withdraw-proof-cache-v1", canonical).toString("hex")}`;
 }
 
 /**
@@ -66,12 +103,14 @@ export function buildWithdrawalProofCacheKey(
 export function syncWithdrawalTree(
   tree: LocalMerkleTree,
   commitments: CommitmentLike[],
-  checkpointOptions: { includeLeaves?: boolean } = {}
+  checkpointOptions: { includeLeaves?: boolean } = {},
 ): BatchSyncResult {
   return syncCommitmentBatch(tree, commitments, checkpointOptions);
 }
 
-export function restoreWithdrawalTree(checkpoint: MerkleCheckpoint): LocalMerkleTree {
+export function restoreWithdrawalTree(
+  checkpoint: MerkleCheckpoint,
+): LocalMerkleTree {
   return LocalMerkleTree.fromCheckpoint(checkpoint);
 }
 
@@ -95,10 +134,10 @@ export function buildWithdrawalPublicInputLayout(
 
 /**
  * generateWithdrawalProof
- * 
+ *
  * A stable API for generating a withdrawal proof across environments.
  * It abstracts the proving backend so that the SDK remains environment-agnostic.
- * 
+ *
  * @param request The withdrawal parameters.
  * @param backend The proving backend to use (e.g., Node or Browser Barretenberg).
  * @returns The formatted proof as a Buffer.
@@ -106,7 +145,7 @@ export function buildWithdrawalPublicInputLayout(
 export async function generateWithdrawalProof(
   request: WithdrawalRequest,
   backend: ProvingBackend,
-  options: WithdrawalProofGenerationOptions = {}
+  options: WithdrawalProofGenerationOptions = {},
 ): Promise<Buffer> {
   const { note, merkleProof, recipient, relayer, fee } = request;
 
@@ -116,10 +155,12 @@ export async function generateWithdrawalProof(
     merkleProof,
     recipient,
     relayer,
-    fee
+    fee,
+    { merkleDepth: options.merkleDepth },
   );
 
-  const key = options.cacheKey ?? buildWithdrawalProofCacheKey(request, witness);
+  const key =
+    options.cacheKey ?? buildWithdrawalProofCacheKey(request, witness);
   if (options.cache) {
     const cached = await options.cache.get(key);
     if (cached) {
@@ -129,7 +170,9 @@ export async function generateWithdrawalProof(
 
   // 2. Generate the raw proof using the injected backend
   const proofGenerator = new ProofGenerator(backend);
-  const rawProof = await proofGenerator.generate(witness);
+  const rawProof = await proofGenerator.generate(witness, {
+    merkleDepth: options.merkleDepth,
+  });
 
   // 3. Format the proof for the Soroban contract
   const proof = ProofGenerator.formatProof(rawProof, buildWithdrawalPublicInputLayout(witness).values);
@@ -147,13 +190,22 @@ export async function generateWithdrawalProof(
  */
 export function extractPublicInputs(witness: PreparedWitness): string[] {
   return buildWithdrawalPublicInputLayout(witness).fields;
+  return [
+    witness.pool_id, // 0
+    witness.root, // 1
+    witness.nullifier_hash, // 2
+    witness.recipient, // 3
+    witness.amount, // 4
+    witness.relayer, // 5
+    witness.fee, // 6
+  ];
 }
 
 /**
  * verifyWithdrawalProof
- * 
+ *
  * Verifies a withdrawal proof off-chain using circuit artifacts.
- * 
+ *
  * @param proof The proof bytes to verify.
  * @param publicInputs The public inputs used for the proof.
  * @param artifacts The circuit artifacts (vkey, etc).
@@ -163,7 +215,7 @@ export async function verifyWithdrawalProof(
   proof: Uint8Array,
   publicInputs: WithdrawalPublicInputs | PreparedWitness | string[],
   artifacts: any,
-  backend: VerifyingBackend
+  backend: VerifyingBackend,
 ): Promise<boolean> {
   assertNamedWithdrawalPublicInputs(publicInputs);
   return backend.verifyProof(proof, buildWithdrawalPublicInputLayout(publicInputs).fields, artifacts);
